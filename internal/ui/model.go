@@ -96,6 +96,7 @@ var (
 	accent     = lipgloss.AdaptiveColor{Light: "#5A4FCF", Dark: "#9D8CFF"}
 	muted      = lipgloss.AdaptiveColor{Light: "#6B6B6B", Dark: "#8A8A8A"}
 	danger     = lipgloss.AdaptiveColor{Light: "#C0392B", Dark: "#FF6B6B"}
+	selectedBg = lipgloss.AdaptiveColor{Light: "#E4E4E4", Dark: "#3A3A3A"}
 	success    = lipgloss.AdaptiveColor{Light: "#1E8449", Dark: "#5FD38D"}
 	warning    = lipgloss.AdaptiveColor{Light: "#B9770E", Dark: "#F5B041"}
 	titleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFFFFF")).Background(accent).Padding(0, 1)
@@ -134,10 +135,8 @@ func New(fetch Fetcher, open Opener, repos []string, interval time.Duration) Mod
 		BorderForeground(muted).
 		BorderBottom(true).
 		Bold(true)
-	styles.Selected = styles.Selected.
-		Foreground(lipgloss.Color("#FFFFFF")).
-		Background(accent).
-		Bold(false)
+	// Keep the terminal's own text colour and only tint the background.
+	styles.Selected = lipgloss.NewStyle().Background(selectedBg)
 	t.SetStyles(styles)
 
 	s := spinner.New(spinner.WithSpinner(spinner.Dot), spinner.WithStyle(lipgloss.NewStyle().Foreground(accent)))
@@ -234,6 +233,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.lastUpdated = msg.at
 		m.nextAt = msg.at.Add(m.interval)
 		m.table.SetRows(m.rows())
+		if m.table.Cursor() < 0 {
+			// SetRows leaves the cursor at -1 after the table was empty.
+			m.table.SetCursor(0)
+		}
 		m.layout()
 		return m, nil
 
@@ -349,7 +352,7 @@ func colorCI(rendered string) string {
 			sub := ciSuffix.FindStringSubmatch(match)
 			for _, look := range ciLooks {
 				if look.label == sub[1] {
-					return look.style.Render(sub[1]) + sub[2]
+					return strings.ReplaceAll(look.style.Render(sub[1]), "\x1b[0m", "\x1b[39m") + sub[2]
 				}
 			}
 			return match

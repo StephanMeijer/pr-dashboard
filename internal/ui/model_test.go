@@ -139,6 +139,27 @@ func TestEnterAndOOpenSelectedPR(t *testing.T) {
 	}
 }
 
+func TestFirstRowIsSelectedAfterFirstFetch(t *testing.T) {
+	var gotNumber int
+	m, _ := newTestModelWithOpener(nil, func(_ context.Context, _ string, number int) error {
+		gotNumber = number
+		return nil
+	})
+	// The clock tick re-sets the rows, which moves the cursor of the still
+	// empty table to -1.
+	m = update(m, clockMsg(t0))
+	m = update(m, resultMsg{prs: twoPRs(), at: t0})
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("enter must open the first row without moving the cursor first")
+	}
+	cmd()
+	if gotNumber != 7 {
+		t.Errorf("opened #%d, want the first row #7", gotNumber)
+	}
+}
+
 func TestOpenWithNoRowsIsNoop(t *testing.T) {
 	m, _ := newTestModelWithOpener(nil, func(context.Context, string, int) error {
 		t.Error("opener must not be called without rows")
