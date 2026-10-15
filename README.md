@@ -6,11 +6,11 @@ to fetch data, so it works with whatever account `gh` is logged in to.
 
 ```
  PR Dashboard  179 open across 2 repos
- Repo                     #       Title                                     Author          Updated   Draft
-───────────────────────────────────────────────────────────────────────────────────────────────────────────
- charmbracelet/bubbletea  #1868   fix(renderer): erase through rows a nar…  yanmxa          20m
- cli/cli                  #14678  `gh issue artifact` stack 12/12: Add ar…  BagToad         50m
- cli/cli                  #14679  Reject terminal stdin for `gh auth logi…  BagToad         1d        draft
+ Repo                     #       Title                                     Author          Updated   Draft  CI
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ charmbracelet/bubbletea  #1868   fix(renderer): erase through rows a nar…  yanmxa          20m              ✓ success
+ cli/cli                  #14678  `gh issue artifact` stack 12/12: Add ar…  BagToad         50m              ● running
+ cli/cli                  #14679  Reject terminal stdin for `gh auth logi…  BagToad         1d        draft  ✗ failure
 Updated 18:04:05 · next refresh in 42s
 ↑/k up • ↓/j down • enter/o open • r refresh • q quit
 ```
@@ -39,6 +39,20 @@ pr-dashboard [--interval 60s] owner/repo [owner/repo ...]
 Pull requests from all repositories are shown in one list, most recently
 updated first. If a repository can't be fetched, its error is shown under the
 table and the other repositories still appear.
+
+### CI column
+
+The CI column summarises the checks on each pull request's latest commit. When
+several checks disagree the worst one wins: failure, then running, then pending,
+then success.
+
+| State       | Meaning                                                              |
+| ----------- | -------------------------------------------------------------------- |
+| `✓ success` | All checks passed (skipped and neutral checks are ignored)           |
+| `● running` | At least one check is in progress                                    |
+| `○ pending` | Checks are queued or waiting, or GitHub reported an unknown status   |
+| `✗ failure` | A check failed, errored, timed out, was cancelled or needs action    |
+| `– none`    | The pull request has no checks                                       |
 
 ### Keys
 
