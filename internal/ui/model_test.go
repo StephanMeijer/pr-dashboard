@@ -100,8 +100,8 @@ func TestManualRefreshIgnoredWhileLoading(t *testing.T) {
 
 func twoPRs() []gh.PR {
 	return []gh.PR{
-		{Repo: "acme/widgets", Number: 7, Title: "Add sprockets", Author: "octocat", UpdatedAt: t0.Add(-time.Hour)},
-		{Repo: "acme/gadgets", Number: 12, Title: "Fix cogs", Author: "hubot", UpdatedAt: t0.Add(-2 * time.Hour)},
+		{Repo: "acme/widgets", Number: 7, Title: "Add sprockets", Author: "octocat", UpdatedAt: t0.Add(-time.Hour), CI: gh.CISuccess},
+		{Repo: "acme/gadgets", Number: 12, Title: "Fix cogs", Author: "hubot", UpdatedAt: t0.Add(-2 * time.Hour), CI: gh.CIFailure},
 	}
 }
 
@@ -167,6 +167,27 @@ func TestHelpShowsOpenBinding(t *testing.T) {
 	m, _ := newTestModel(nil)
 	if view := m.View(); !strings.Contains(view, "enter/o open") {
 		t.Errorf("help footer missing open binding:\n%s", view)
+	}
+}
+
+func TestViewShowsCIState(t *testing.T) {
+	states := map[gh.CIState]string{
+		gh.CISuccess: "✓ success",
+		gh.CIFailure: "✗ failure",
+		gh.CIRunning: "● running",
+		gh.CIPending: "○ pending",
+		gh.CINone:    "– none",
+	}
+	for state, want := range states {
+		t.Run(string(state), func(t *testing.T) {
+			m, _ := newTestModel(nil)
+			prs := []gh.PR{{Repo: "acme/widgets", Number: 1, Title: "t", Author: "a", UpdatedAt: t0, CI: state}}
+			m = update(m, resultMsg{prs: prs, at: t0})
+			view := m.View()
+			if !strings.Contains(view, "CI") || !strings.Contains(view, want) {
+				t.Errorf("view missing CI header or %q:\n%s", want, view)
+			}
+		})
 	}
 }
 

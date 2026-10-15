@@ -40,6 +40,7 @@ const (
 	authorWidth  = 18
 	updatedWidth = 8
 	draftWidth   = 5
+	ciWidth      = 9
 	maxRepoWidth = 30
 	minTitle     = 20
 	cellPadding  = 2 // table cells are padded one column on each side
@@ -85,6 +86,8 @@ var (
 	accent     = lipgloss.AdaptiveColor{Light: "#5A4FCF", Dark: "#9D8CFF"}
 	muted      = lipgloss.AdaptiveColor{Light: "#6B6B6B", Dark: "#8A8A8A"}
 	danger     = lipgloss.AdaptiveColor{Light: "#C0392B", Dark: "#FF6B6B"}
+	success    = lipgloss.AdaptiveColor{Light: "#1E8449", Dark: "#5FD38D"}
+	warning    = lipgloss.AdaptiveColor{Light: "#B9770E", Dark: "#F5B041"}
 	titleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFFFFF")).Background(accent).Padding(0, 1)
 	infoStyle  = lipgloss.NewStyle().Foreground(muted)
 	errStyle   = lipgloss.NewStyle().Foreground(danger)
@@ -255,6 +258,7 @@ func (m Model) rows() []table.Row {
 			pr.Author,
 			age(now.Sub(pr.UpdatedAt)),
 			draft,
+			ciCell(pr.CI),
 		}
 	}
 	return rows
@@ -268,8 +272,8 @@ func (m *Model) layout() {
 	}
 	repoWidth = min(repoWidth, maxRepoWidth)
 
-	fixed := repoWidth + numberWidth + authorWidth + updatedWidth + draftWidth
-	const columns = 6
+	fixed := repoWidth + numberWidth + authorWidth + updatedWidth + draftWidth + ciWidth
+	const columns = 7
 	titleWidth := max(minTitle, m.width-fixed-columns*cellPadding)
 
 	m.table.SetColumns([]table.Column{
@@ -279,9 +283,27 @@ func (m *Model) layout() {
 		{Title: "Author", Width: authorWidth},
 		{Title: "Updated", Width: updatedWidth},
 		{Title: "Draft", Width: draftWidth},
+		{Title: "CI", Width: ciWidth},
 	})
 	m.table.SetWidth(m.width)
 	m.table.SetHeight(max(1, m.height-chromeLines-len(m.errLines())))
+}
+
+// ciCell renders a CI state as a symbol and a word, so it stays readable
+// without colour.
+func ciCell(s gh.CIState) string {
+	switch s {
+	case gh.CISuccess:
+		return lipgloss.NewStyle().Foreground(success).Render("✓ success")
+	case gh.CIFailure:
+		return lipgloss.NewStyle().Foreground(danger).Render("✗ failure")
+	case gh.CIRunning:
+		return lipgloss.NewStyle().Foreground(warning).Render("● running")
+	case gh.CIPending:
+		return infoStyle.Render("○ pending")
+	default:
+		return infoStyle.Render("– none")
+	}
 }
 
 func (m Model) errLines() []string {
