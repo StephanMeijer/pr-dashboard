@@ -15,10 +15,22 @@ import (
 )
 
 // prFields are the JSON fields requested from `gh pr list`.
-const prFields = "number,title,author,headRefName,isDraft,updatedAt,url"
+const prFields = "number,title,author,headRefName,isDraft,updatedAt,url,statusCheckRollup"
 
 // prLimit caps how many open pull requests are fetched per repository.
 const prLimit = 100
+
+// CIState is the aggregated state of the checks on a pull request's head commit.
+type CIState string
+
+// CI states, from a pull request without checks to one with a failing check.
+const (
+	CINone    CIState = "none"
+	CISuccess CIState = "success"
+	CIPending CIState = "pending"
+	CIRunning CIState = "running"
+	CIFailure CIState = "failure"
+)
 
 // PR is an open pull request in a repository.
 type PR struct {
@@ -30,6 +42,7 @@ type PR struct {
 	Draft     bool
 	UpdatedAt time.Time
 	URL       string
+	CI        CIState
 }
 
 // Runner executes gh with the given arguments and returns its stdout.
@@ -70,6 +83,16 @@ type rawPR struct {
 	IsDraft     bool      `json:"isDraft"`
 	UpdatedAt   time.Time `json:"updatedAt"`
 	URL         string    `json:"url"`
+
+	StatusCheckRollup []rawCheck `json:"statusCheckRollup"`
+}
+
+// rawCheck is an entry of a status check rollup: a CheckRun carries status
+// and conclusion, a StatusContext carries state.
+type rawCheck struct {
+	Status     string `json:"status"`
+	Conclusion string `json:"conclusion"`
+	State      string `json:"state"`
 }
 
 // Fetch returns the open pull requests of a single repository ("owner/name").
@@ -98,9 +121,56 @@ func (c *Client) Fetch(ctx context.Context, repo string) ([]PR, error) {
 			Draft:     r.IsDraft,
 			UpdatedAt: r.UpdatedAt,
 			URL:       r.URL,
+			CI:        rollup(r.StatusCheckRollup),
 		}
 	}
 	return prs, nil
+}
+
+// rollup aggregates checks into a single state. Failure beats running, which
+// beats pending, which beats success. Skipped and neutral checks are ignored,
+// and a pull request without checks has none. Values that are not recognised
+// count as pending so that a new GitHub value never reads as green.
+func rollup(checks []rawCheck) CIState {
+	if len(checks) == 0 {
+		return CINone
+	}
+	worst := CISuccess
+	for _, c := range checks {
+		if s := checkState(c); ciRank[s] > ciRank[worst] {
+			worst = s
+		}
+	}
+	return worst
+}
+
+var ciRank = map[CIState]int{CISuccess: 0, CIPending: 1, CIRunning: 2, CIFailure: 3}
+
+func checkState(c rawCheck) CIState {
+	if c.State != "" {
+		switch c.State {
+		case "SUCCESS":
+			return CISuccess
+		case "FAILURE", "ERROR":
+			return CIFailure
+		default: // PENDING, EXPECTED and anything new
+			return CIPending
+		}
+	}
+	switch c.Status {
+	case "COMPLETED":
+		switch c.Conclusion {
+		case "SUCCESS", "NEUTRAL", "SKIPPED":
+			return CISuccess
+		case "FAILURE", "TIMED_OUT", "CANCELLED", "STARTUP_FAILURE", "ACTION_REQUIRED", "STALE":
+			return CIFailure
+		}
+		return CIPending
+	case "IN_PROGRESS":
+		return CIRunning
+	default: // QUEUED, WAITING, PENDING, REQUESTED and anything new
+		return CIPending
+	}
 }
 
 // Open shows pull request number of repo ("owner/name") in the default

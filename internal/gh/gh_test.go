@@ -38,6 +38,9 @@ func TestFetchParsesGhOutput(t *testing.T) {
 		got.Branch != "deps/bump" || !got.Draft || got.UpdatedAt.IsZero() {
 		t.Errorf("unexpected pr: %+v", got)
 	}
+	if prs[0].CI != CISuccess || got.CI != CIFailure {
+		t.Errorf("CI = %q, %q; want success, failure", prs[0].CI, got.CI)
+	}
 }
 
 func TestFetchAllKeepsPartialResultsAndSorts(t *testing.T) {
@@ -75,5 +78,39 @@ func TestOpenWrapsRunnerError(t *testing.T) {
 	err := c.Open(context.Background(), "acme/widgets", 7)
 	if !errors.Is(err, cause) || !strings.Contains(err.Error(), "acme/widgets#7") {
 		t.Errorf("unexpected error %v", err)
+	}
+}
+
+func TestRollup(t *testing.T) {
+	run := func(status, conclusion string) rawCheck { return rawCheck{Status: status, Conclusion: conclusion} }
+	ok := run("COMPLETED", "SUCCESS")
+	cases := []struct {
+		name   string
+		checks []rawCheck
+		want   CIState
+	}{
+		{"no checks", nil, CINone},
+		{"all success", []rawCheck{ok, ok}, CISuccess},
+		{"skipped and neutral only", []rawCheck{run("COMPLETED", "SKIPPED"), run("COMPLETED", "NEUTRAL")}, CISuccess},
+		{"failure among successes", []rawCheck{ok, run("COMPLETED", "FAILURE"), ok}, CIFailure},
+		{"timed out", []rawCheck{ok, run("COMPLETED", "TIMED_OUT")}, CIFailure},
+		{"cancelled", []rawCheck{run("COMPLETED", "CANCELLED")}, CIFailure},
+		{"running beats success", []rawCheck{ok, run("IN_PROGRESS", "")}, CIRunning},
+		{"running beats pending", []rawCheck{run("QUEUED", ""), run("IN_PROGRESS", "")}, CIRunning},
+		{"failure beats running", []rawCheck{run("IN_PROGRESS", ""), run("COMPLETED", "FAILURE")}, CIFailure},
+		{"pending beats success", []rawCheck{ok, run("QUEUED", "")}, CIPending},
+		{"waiting is pending", []rawCheck{run("WAITING", "")}, CIPending},
+		{"status context success", []rawCheck{{State: "SUCCESS"}}, CISuccess},
+		{"status context error", []rawCheck{ok, {State: "ERROR"}}, CIFailure},
+		{"status context expected", []rawCheck{{State: "EXPECTED"}}, CIPending},
+		{"unknown conclusion is not green", []rawCheck{run("COMPLETED", "SOMETHING_NEW")}, CIPending},
+		{"unknown status is not green", []rawCheck{run("SOMETHING_NEW", "")}, CIPending},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := rollup(tc.checks); got != tc.want {
+				t.Errorf("rollup = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
