@@ -53,3 +53,27 @@ func TestFetchAllKeepsPartialResultsAndSorts(t *testing.T) {
 		t.Errorf("want most recently updated first, got #%d", prs[0].Number)
 	}
 }
+
+func TestOpenRunsPrViewWeb(t *testing.T) {
+	var got []string
+	c := &Client{Run: func(_ context.Context, args ...string) ([]byte, error) {
+		got = args
+		return nil, nil
+	}}
+	if err := c.Open(context.Background(), "acme/widgets", 7); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"pr", "view", "7", "--repo", "acme/widgets", "--web"}
+	if !slices.Equal(got, want) {
+		t.Errorf("args = %v, want %v", got, want)
+	}
+}
+
+func TestOpenWrapsRunnerError(t *testing.T) {
+	cause := errors.New("no browser")
+	c := &Client{Run: func(context.Context, ...string) ([]byte, error) { return nil, cause }}
+	err := c.Open(context.Background(), "acme/widgets", 7)
+	if !errors.Is(err, cause) || !strings.Contains(err.Error(), "acme/widgets#7") {
+		t.Errorf("unexpected error %v", err)
+	}
+}

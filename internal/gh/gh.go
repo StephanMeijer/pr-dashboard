@@ -103,6 +103,15 @@ func (c *Client) Fetch(ctx context.Context, repo string) ([]PR, error) {
 	return prs, nil
 }
 
+// Open shows pull request number of repo ("owner/name") in the default
+// browser, leaving it to gh to launch the browser on every platform.
+func (c *Client) Open(ctx context.Context, repo string, number int) error {
+	if _, err := c.Run(ctx, "pr", "view", fmt.Sprint(number), "--repo", repo, "--web"); err != nil {
+		return fmt.Errorf("open %s#%d: %w", repo, number, err)
+	}
+	return nil
+}
+
 // FetchAll fetches every repository concurrently. Pull requests from the
 // repositories that succeeded are returned, most recently updated first,
 // together with the joined errors of the ones that failed.
