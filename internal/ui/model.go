@@ -47,6 +47,15 @@ const (
 	cellPadding  = 2 // table cells are padded one column on each side
 )
 
+// On a narrow terminal the Author, Repo and Title columns shrink, in that
+// order, down to these widths so that the columns on the right (Draft, CI)
+// stay on screen.
+const (
+	shrunkAuthor = 8
+	shrunkRepo   = 12
+	shrunkTitle  = 8
+)
+
 // chromeLines is the number of lines used around the table: title bar,
 // status line and help line.
 const chromeLines = 3
@@ -273,15 +282,27 @@ func (m *Model) layout() {
 	}
 	repoWidth = min(repoWidth, maxRepoWidth)
 
-	fixed := repoWidth + numberWidth + authorWidth + updatedWidth + draftWidth + ciWidth
+	author := authorWidth
+	fixed := repoWidth + numberWidth + author + updatedWidth + draftWidth + ciWidth
 	const columns = 7
-	titleWidth := max(minTitle, m.width-fixed-columns*cellPadding)
+	titleWidth := m.width - fixed - columns*cellPadding
+	if deficit := minTitle - titleWidth; deficit > 0 {
+		titleWidth = minTitle
+		shrink := func(w *int, floor int) {
+			take := min(deficit, max(0, *w-floor))
+			*w -= take
+			deficit -= take
+		}
+		shrink(&author, shrunkAuthor)
+		shrink(&repoWidth, shrunkRepo)
+		shrink(&titleWidth, shrunkTitle)
+	}
 
 	m.table.SetColumns([]table.Column{
 		{Title: "Repo", Width: repoWidth},
 		{Title: "#", Width: numberWidth},
 		{Title: "Title", Width: titleWidth},
-		{Title: "Author", Width: authorWidth},
+		{Title: "Author", Width: author},
 		{Title: "Updated", Width: updatedWidth},
 		{Title: "Draft", Width: draftWidth},
 		{Title: "CI", Width: ciWidth},

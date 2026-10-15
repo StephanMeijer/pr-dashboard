@@ -213,6 +213,28 @@ func TestCIStateSurvivesColour(t *testing.T) {
 	}
 }
 
+// A table wider than the terminal is cut off on the right, which hides the
+// last column. The columns must shrink instead.
+func TestCIColumnFitsNarrowTerminals(t *testing.T) {
+	const minWidth = 72
+	for width := minWidth; width <= 200; width++ {
+		m := New(nil, nil, []string{"stephanmeijer/meneerhenk"}, time.Minute)
+		m.now = func() time.Time { return t0 }
+		m = update(m, tea.WindowSizeMsg{Width: width, Height: 20})
+		prs := []gh.PR{{Repo: "stephanmeijer/meneerhenk", Number: 578, Title: "feat(executor): apply_patch for GPT-family models", Author: "StephanMeijer", UpdatedAt: t0, CI: gh.CIFailure}}
+		m = update(m, resultMsg{prs: prs, at: t0})
+
+		for _, line := range strings.Split(m.View(), "\n") {
+			if w := lipgloss.Width(line); w > width {
+				t.Fatalf("width %d: line is %d wide: %q", width, w, line)
+			}
+		}
+		if view := m.View(); !strings.Contains(view, "✗ failure") {
+			t.Fatalf("width %d: CI cell missing:\n%s", width, view)
+		}
+	}
+}
+
 func TestAge(t *testing.T) {
 	cases := map[time.Duration]string{
 		45 * time.Second: "45s",
