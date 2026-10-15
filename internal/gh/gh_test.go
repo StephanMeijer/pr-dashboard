@@ -38,6 +38,9 @@ func TestFetchParsesGhOutput(t *testing.T) {
 		got.Branch != "deps/bump" || !got.Draft || got.UpdatedAt.IsZero() {
 		t.Errorf("unexpected pr: %+v", got)
 	}
+	if prs[0].Conflicting || !got.Conflicting {
+		t.Errorf("Conflicting = %v, %v; want false, true", prs[0].Conflicting, got.Conflicting)
+	}
 	if prs[0].CI != CISuccess || got.CI != CIFailure {
 		t.Errorf("CI = %q, %q; want success, failure", prs[0].CI, got.CI)
 	}

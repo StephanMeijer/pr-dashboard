@@ -15,7 +15,7 @@ import (
 )
 
 // prFields are the JSON fields requested from `gh pr list`.
-const prFields = "number,title,author,headRefName,isDraft,updatedAt,url,statusCheckRollup"
+const prFields = "number,title,author,headRefName,isDraft,updatedAt,url,mergeable,statusCheckRollup"
 
 // prLimit caps how many open pull requests are fetched per repository.
 const prLimit = 100
@@ -43,6 +43,10 @@ type PR struct {
 	UpdatedAt time.Time
 	URL       string
 	CI        CIState
+
+	// Conflicting is set when the branch has merge conflicts with its base.
+	// GitHub computes this lazily, so it is false while still unknown.
+	Conflicting bool
 }
 
 // Runner executes gh with the given arguments and returns its stdout.
@@ -84,6 +88,7 @@ type rawPR struct {
 	UpdatedAt   time.Time `json:"updatedAt"`
 	URL         string    `json:"url"`
 
+	Mergeable         string     `json:"mergeable"`
 	StatusCheckRollup []rawCheck `json:"statusCheckRollup"`
 }
 
@@ -113,15 +118,16 @@ func (c *Client) Fetch(ctx context.Context, repo string) ([]PR, error) {
 	prs := make([]PR, len(raw))
 	for i, r := range raw {
 		prs[i] = PR{
-			Repo:      repo,
-			Number:    r.Number,
-			Title:     r.Title,
-			Author:    r.Author.Login,
-			Branch:    r.HeadRefName,
-			Draft:     r.IsDraft,
-			UpdatedAt: r.UpdatedAt,
-			URL:       r.URL,
-			CI:        rollup(r.StatusCheckRollup),
+			Repo:        repo,
+			Number:      r.Number,
+			Title:       r.Title,
+			Author:      r.Author.Login,
+			Branch:      r.HeadRefName,
+			Draft:       r.IsDraft,
+			UpdatedAt:   r.UpdatedAt,
+			URL:         r.URL,
+			CI:          rollup(r.StatusCheckRollup),
+			Conflicting: r.Mergeable == "CONFLICTING",
 		}
 	}
 	return prs, nil
