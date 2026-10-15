@@ -15,8 +15,12 @@ import (
 var t0 = time.Date(2026, 10, 15, 14, 0, 0, 0, time.UTC)
 
 func newTestModel(fetch Fetcher) (Model, *time.Time) {
+	return newTestModelWithOpener(fetch, nil)
+}
+
+func newTestModelWithOpener(fetch Fetcher, open Opener) (Model, *time.Time) {
 	now := t0
-	m := New(fetch, []string{"acme/widgets", "acme/broken"}, time.Minute)
+	m := New(fetch, open, []string{"acme/widgets", "acme/broken"}, time.Minute)
 	m.now = func() time.Time { return now }
 	return update(m, tea.WindowSizeMsg{Width: 120, Height: 20}), &now
 }
@@ -91,6 +95,78 @@ func TestManualRefreshIgnoredWhileLoading(t *testing.T) {
 	next, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("r")})
 	if !next.(Model).loading || cmd == nil {
 		t.Error("expected manual refresh to start a fetch")
+	}
+}
+
+func twoPRs() []gh.PR {
+	return []gh.PR{
+		{Repo: "acme/widgets", Number: 7, Title: "Add sprockets", Author: "octocat", UpdatedAt: t0.Add(-time.Hour)},
+		{Repo: "acme/gadgets", Number: 12, Title: "Fix cogs", Author: "hubot", UpdatedAt: t0.Add(-2 * time.Hour)},
+	}
+}
+
+func TestEnterAndOOpenSelectedPR(t *testing.T) {
+	keyPresses := map[string]tea.KeyMsg{
+		"enter": {Type: tea.KeyEnter},
+		"o":     {Type: tea.KeyRunes, Runes: []rune("o")},
+	}
+	for name, press := range keyPresses {
+		t.Run(name, func(t *testing.T) {
+			var gotRepo string
+			var gotNumber int
+			open := func(_ context.Context, repo string, number int) error {
+				gotRepo, gotNumber = repo, number
+				return nil
+			}
+			m, _ := newTestModelWithOpener(nil, open)
+			m = update(m, resultMsg{prs: twoPRs(), at: t0})
+			m = update(m, tea.KeyMsg{Type: tea.KeyDown})
+
+			_, cmd := m.Update(press)
+			if cmd == nil {
+				t.Fatal("expected an open command")
+			}
+			msg, ok := cmd().(openMsg)
+			if !ok || msg.err != nil {
+				t.Fatalf("unexpected result %#v", msg)
+			}
+			if gotRepo != "acme/gadgets" || gotNumber != 12 {
+				t.Errorf("opened %s#%d, want acme/gadgets#12", gotRepo, gotNumber)
+			}
+		})
+	}
+}
+
+func TestOpenWithNoRowsIsNoop(t *testing.T) {
+	m, _ := newTestModelWithOpener(nil, func(context.Context, string, int) error {
+		t.Error("opener must not be called without rows")
+		return nil
+	})
+	m = update(m, resultMsg{at: t0})
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd != nil {
+		t.Error("expected no command when there are no pull requests")
+	}
+}
+
+func TestOpenErrorIsShownAndClearedOnRefresh(t *testing.T) {
+	m, _ := newTestModel(nil)
+	m = update(m, resultMsg{prs: twoPRs(), at: t0})
+	m = update(m, openMsg{err: errors.New("open acme/widgets#7: no browser")})
+	if view := m.View(); !strings.Contains(view, "open acme/widgets#7: no browser") {
+		t.Error("view missing open error")
+	}
+
+	m = update(m, resultMsg{prs: twoPRs(), at: t0})
+	if view := m.View(); strings.Contains(view, "no browser") {
+		t.Error("open error should clear after a refresh")
+	}
+}
+
+func TestHelpShowsOpenBinding(t *testing.T) {
+	m, _ := newTestModel(nil)
+	if view := m.View(); !strings.Contains(view, "enter/o open") {
+		t.Errorf("help footer missing open binding:\n%s", view)
 	}
 }
 

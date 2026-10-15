@@ -21,8 +21,14 @@ import (
 // return partial results together with an error.
 type Fetcher func(ctx context.Context, repos []string) ([]gh.PR, error)
 
+// Opener shows a pull request in the browser.
+type Opener func(ctx context.Context, repo string, number int) error
+
 // fetchTimeout bounds a single refresh of all repositories.
 const fetchTimeout = 30 * time.Second
+
+// openTimeout bounds launching the browser for a pull request.
+const openTimeout = 10 * time.Second
 
 // clockInterval is how often the countdown is redrawn and the refresh
 // deadline is checked.
@@ -50,17 +56,19 @@ type (
 		err error
 		at  time.Time
 	}
+	openMsg struct{ err error }
 )
 
 type keyMap struct {
 	Up      key.Binding
 	Down    key.Binding
+	Open    key.Binding
 	Refresh key.Binding
 	Quit    key.Binding
 }
 
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Up, k.Down, k.Refresh, k.Quit}
+	return []key.Binding{k.Up, k.Down, k.Open, k.Refresh, k.Quit}
 }
 
 func (k keyMap) FullHelp() [][]key.Binding { return [][]key.Binding{k.ShortHelp()} }
@@ -68,6 +76,7 @@ func (k keyMap) FullHelp() [][]key.Binding { return [][]key.Binding{k.ShortHelp(
 var keys = keyMap{
 	Up:      key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
 	Down:    key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
+	Open:    key.NewBinding(key.WithKeys("enter", "o"), key.WithHelp("enter/o", "open")),
 	Refresh: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
 	Quit:    key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
 }
@@ -84,6 +93,7 @@ var (
 // Model is the dashboard state.
 type Model struct {
 	fetch    Fetcher
+	open     Opener
 	repos    []string
 	interval time.Duration
 	now      func() time.Time
@@ -95,6 +105,7 @@ type Model struct {
 	loading     bool
 	prs         []gh.PR
 	err         error
+	openErr     error
 	lastUpdated time.Time
 	nextAt      time.Time
 	width       int
@@ -102,7 +113,7 @@ type Model struct {
 }
 
 // New returns a dashboard for repos that refreshes every interval.
-func New(fetch Fetcher, repos []string, interval time.Duration) Model {
+func New(fetch Fetcher, open Opener, repos []string, interval time.Duration) Model {
 	t := table.New(table.WithFocused(true))
 	styles := table.DefaultStyles()
 	styles.Header = styles.Header.
@@ -120,6 +131,7 @@ func New(fetch Fetcher, repos []string, interval time.Duration) Model {
 
 	m := Model{
 		fetch:    fetch,
+		open:     open,
 		repos:    repos,
 		interval: interval,
 		now:      time.Now,
@@ -157,6 +169,15 @@ func (m Model) fetchCmd() tea.Cmd {
 	}
 }
 
+func (m Model) openCmd(pr gh.PR) tea.Cmd {
+	open := m.open
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), openTimeout)
+		defer cancel()
+		return openMsg{err: open(ctx, pr.Repo, pr.Number)}
+	}
+}
+
 // Update handles messages.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -164,6 +185,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch {
 		case key.Matches(msg, keys.Quit):
 			return m, tea.Quit
+		case key.Matches(msg, keys.Open):
+			cursor := m.table.Cursor()
+			if cursor < 0 || cursor >= len(m.prs) {
+				return m, nil
+			}
+			m.openErr = nil
+			m.layout()
+			return m, m.openCmd(m.prs[cursor])
 		case key.Matches(msg, keys.Refresh):
 			if m.loading {
 				return m, nil
@@ -187,10 +216,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case resultMsg:
 		m.loading = false
 		m.err = msg.err
+		m.openErr = nil
 		m.prs = msg.prs
 		m.lastUpdated = msg.at
 		m.nextAt = msg.at.Add(m.interval)
 		m.table.SetRows(m.rows())
+		m.layout()
+		return m, nil
+
+	case openMsg:
+		m.openErr = msg.err
 		m.layout()
 		return m, nil
 
@@ -250,10 +285,13 @@ func (m *Model) layout() {
 }
 
 func (m Model) errLines() []string {
-	if m.err == nil {
-		return nil
+	var lines []string
+	for _, err := range []error{m.err, m.openErr} {
+		if err != nil {
+			lines = append(lines, strings.Split(err.Error(), "\n")...)
+		}
 	}
-	return strings.Split(m.err.Error(), "\n")
+	return lines
 }
 
 // View renders the dashboard.

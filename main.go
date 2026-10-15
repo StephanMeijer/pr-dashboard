@@ -50,7 +50,7 @@ func run() error {
 	}
 
 	client := gh.New()
-	model := ui.New(client.FetchAll, repos, *interval)
+	model := ui.New(client.FetchAll, client.Open, repos, *interval)
 	_, err := tea.NewProgram(model, tea.WithAltScreen()).Run()
 	return err
 }
