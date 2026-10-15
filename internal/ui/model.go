@@ -37,14 +37,15 @@ const clockInterval = time.Second
 
 // Fixed column widths; the title column takes the remaining space.
 const (
-	numberWidth  = 6
-	authorWidth  = 18
-	updatedWidth = 8
-	draftWidth   = 5
-	ciWidth      = 9
-	maxRepoWidth = 30
-	minTitle     = 20
-	cellPadding  = 2 // table cells are padded one column on each side
+	numberWidth   = 6
+	authorWidth   = 18
+	updatedWidth  = 8
+	draftWidth    = 5
+	conflictWidth = 10
+	ciWidth       = 9
+	maxRepoWidth  = 30
+	minTitle      = 20
+	cellPadding   = 2 // table cells are padded one column on each side
 )
 
 // On a narrow terminal the Author, Repo and Title columns shrink, in that
@@ -271,6 +272,7 @@ func (m Model) rows() []table.Row {
 			pr.Author,
 			age(now.Sub(pr.UpdatedAt)),
 			draft,
+			conflictCell(pr.Conflicting),
 			ciCell(pr.CI),
 		}
 	}
@@ -286,8 +288,8 @@ func (m *Model) layout() {
 	repoWidth = min(repoWidth, maxRepoWidth)
 
 	author := authorWidth
-	fixed := repoWidth + numberWidth + author + updatedWidth + draftWidth + ciWidth
-	const columns = 7
+	fixed := repoWidth + numberWidth + author + updatedWidth + draftWidth + conflictWidth + ciWidth
+	const columns = 8
 	titleWidth := m.width - fixed - columns*cellPadding
 	if deficit := minTitle - titleWidth; deficit > 0 {
 		titleWidth = minTitle
@@ -308,6 +310,7 @@ func (m *Model) layout() {
 		{Title: "Author", Width: author},
 		{Title: "Updated", Width: updatedWidth},
 		{Title: "Draft", Width: draftWidth},
+		{Title: "Conflict", Width: conflictWidth},
 		{Title: "CI", Width: ciWidth},
 	})
 	m.table.SetWidth(m.width)
@@ -331,7 +334,7 @@ var ciLooks = map[gh.CIState]ciLook{
 
 // ciCell is the plain-text table cell of a CI state. It must not contain
 // escape sequences: the table truncates cells with a width function that
-// counts them as visible characters. See colorCI.
+// counts them as visible characters. See colorStatus.
 func ciCell(s gh.CIState) string {
 	if look, ok := ciLooks[s]; ok {
 		return look.label
@@ -339,20 +342,49 @@ func ciCell(s gh.CIState) string {
 	return ciLooks[gh.CINone].label
 }
 
-// ciSuffix matches the CI label ending a rendered table line, optionally
-// followed by padding and the reset sequence of a styled (selected) row.
-var ciSuffix = regexp.MustCompile(`(✓ success|✗ failure|● running|○ pending|– none)((?: |\x1b\[[0-9;]*m)*)$`)
+// conflictLabel marks a pull request whose branch has merge conflicts.
+const conflictLabel = "✗ conflict"
 
-// colorCI colours the CI label at the end of each line of the rendered table.
-// The CI column is last, so a label there cannot be part of a title.
-func colorCI(rendered string) string {
+// conflictCell is the plain-text table cell for merge conflicts.
+func conflictCell(conflicting bool) string {
+	if conflicting {
+		return conflictLabel
+	}
+	return ""
+}
+
+// statusTail matches the end of a rendered table line: the optional conflict
+// label and the CI label, which are the last two columns, followed by padding
+// and the reset sequence of a styled (selected) row. Anchoring to the end
+// keeps a title that happens to contain such text from being coloured.
+var statusTail = regexp.MustCompile(
+	`(?:(` + conflictLabel + `)( +))?` +
+		`(✓ success|✗ failure|● running|○ pending|– none)` +
+		`((?: |\x1b\[[0-9;]*m)*)$`)
+
+// paint colours a label with a foreground colour only, so that the background
+// of a selected row stays intact behind it.
+func paint(style lipgloss.Style, label string) string {
+	return strings.ReplaceAll(style.Render(label), "\x1b[0m", "\x1b[39m")
+}
+
+// colorStatus colours the conflict and CI labels in the rendered table. They
+// are coloured after rendering because the table truncates cells with a width
+// function that counts escape sequences as visible characters.
+func colorStatus(rendered string) string {
 	lines := strings.Split(rendered, "\n")
 	for i, line := range lines {
-		lines[i] = ciSuffix.ReplaceAllStringFunc(line, func(match string) string {
-			sub := ciSuffix.FindStringSubmatch(match)
+		lines[i] = statusTail.ReplaceAllStringFunc(line, func(match string) string {
+			sub := statusTail.FindStringSubmatch(match)
+			conflict, gap, ci, trail := sub[1], sub[2], sub[3], sub[4]
+
+			out := ""
+			if conflict != "" {
+				out = paint(lipgloss.NewStyle().Foreground(danger), conflict) + gap
+			}
 			for _, look := range ciLooks {
-				if look.label == sub[1] {
-					return strings.ReplaceAll(look.style.Render(sub[1]), "\x1b[0m", "\x1b[39m") + sub[2]
+				if look.label == ci {
+					return out + paint(look.style, ci) + trail
 				}
 			}
 			return match
@@ -379,7 +411,7 @@ func (m Model) View() string {
 	scope := infoStyle.Render(fmt.Sprintf(" %d open across %d repos", len(m.prs), len(m.repos)))
 	b.WriteString(title + scope + "\n")
 
-	b.WriteString(colorCI(m.table.View()) + "\n")
+	b.WriteString(colorStatus(m.table.View()) + "\n")
 
 	for _, line := range m.errLines() {
 		b.WriteString(errStyle.Render("✗ "+line) + "\n")

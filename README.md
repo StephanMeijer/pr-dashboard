@@ -6,11 +6,11 @@ to fetch data, so it works with whatever account `gh` is logged in to.
 
 ```
  PR Dashboard  179 open across 2 repos
- Repo                     #       Title                                     Author          Updated   Draft  CI
-─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- charmbracelet/bubbletea  #1868   fix(renderer): erase through rows a nar…  yanmxa          20m              ✓ success
- cli/cli                  #14678  `gh issue artifact` stack 12/12: Add ar…  BagToad         50m              ● running
- cli/cli                  #14679  Reject terminal stdin for `gh auth logi…  BagToad         1d        draft  ✗ failure
+ Repo                     #       Title                                     Author          Updated   Draft  Conflict    CI
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ charmbracelet/bubbletea  #1868   fix(renderer): erase through rows a nar…  yanmxa          20m                          ✓ success
+ cli/cli                  #14678  `gh issue artifact` stack 12/12: Add ar…  BagToad         50m              ✗ conflict  ● running
+ cli/cli                  #14679  Reject terminal stdin for `gh auth logi…  BagToad         1d        draft              ✗ failure
 Updated 18:04:05 · next refresh in 42s
 ↑/k up • ↓/j down • enter/o open • r refresh • q quit
 ```
@@ -39,6 +39,13 @@ pr-dashboard [--interval 60s] owner/repo [owner/repo ...]
 Pull requests from all repositories are shown in one list, most recently
 updated first. If a repository can't be fetched, its error is shown under the
 table and the other repositories still appear.
+
+### Conflict column
+
+`✗ conflict` means the branch has merge conflicts with its base branch and
+needs to be rebased or merged before the pull request can be merged. The cell
+stays empty when there are no conflicts, and also while GitHub has not worked
+it out yet (it computes this lazily, so it can take a refresh or two).
 
 ### CI column
 

@@ -222,9 +222,11 @@ func TestCIStateSurvivesColour(t *testing.T) {
 	t.Cleanup(func() { lipgloss.SetColorProfile(prev) })
 
 	m, _ := newTestModel(nil)
-	m = update(m, resultMsg{prs: twoPRs(), at: t0}) // first row is selected
+	prs := twoPRs()
+	prs[0].Conflicting = true
+	m = update(m, resultMsg{prs: prs, at: t0}) // first row is selected
 	view := m.View()
-	for _, want := range []string{"✓ success", "✗ failure"} {
+	for _, want := range []string{"✓ success", "✗ failure", "✗ conflict"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("coloured view missing %q:\n%q", want, view)
 		}
@@ -237,12 +239,12 @@ func TestCIStateSurvivesColour(t *testing.T) {
 // A table wider than the terminal is cut off on the right, which hides the
 // last column. The columns must shrink instead.
 func TestCIColumnFitsNarrowTerminals(t *testing.T) {
-	const minWidth = 72
+	const minWidth = 82
 	for width := minWidth; width <= 200; width++ {
 		m := New(nil, nil, []string{"stephanmeijer/meneerhenk"}, time.Minute)
 		m.now = func() time.Time { return t0 }
 		m = update(m, tea.WindowSizeMsg{Width: width, Height: 20})
-		prs := []gh.PR{{Repo: "stephanmeijer/meneerhenk", Number: 578, Title: "feat(executor): apply_patch for GPT-family models", Author: "StephanMeijer", UpdatedAt: t0, CI: gh.CIFailure}}
+		prs := []gh.PR{{Repo: "stephanmeijer/meneerhenk", Number: 578, Title: "feat(executor): apply_patch for GPT-family models", Author: "StephanMeijer", UpdatedAt: t0, CI: gh.CIFailure, Conflicting: true}}
 		m = update(m, resultMsg{prs: prs, at: t0})
 
 		for _, line := range strings.Split(m.View(), "\n") {
@@ -250,9 +252,32 @@ func TestCIColumnFitsNarrowTerminals(t *testing.T) {
 				t.Fatalf("width %d: line is %d wide: %q", width, w, line)
 			}
 		}
-		if view := m.View(); !strings.Contains(view, "✗ failure") {
-			t.Fatalf("width %d: CI cell missing:\n%s", width, view)
+		view := m.View()
+		for _, want := range []string{"✗ failure", "✗ conflict"} {
+			if !strings.Contains(view, want) {
+				t.Fatalf("width %d: %q missing:\n%s", width, want, view)
+			}
 		}
+	}
+}
+
+func TestConflictColumn(t *testing.T) {
+	m, _ := newTestModel(nil)
+	prs := twoPRs()
+	prs[1].Conflicting = true
+	m = update(m, resultMsg{prs: prs, at: t0})
+
+	var lines []string
+	for _, line := range strings.Split(m.View(), "\n") {
+		if strings.Contains(line, "✗ conflict") {
+			lines = append(lines, line)
+		}
+	}
+	if len(lines) != 1 || !strings.Contains(lines[0], "acme/gadgets") {
+		t.Errorf("want only acme/gadgets marked as conflicting, got %q", lines)
+	}
+	if !strings.Contains(m.View(), "Conflict") {
+		t.Error("view missing Conflict header")
 	}
 }
 
