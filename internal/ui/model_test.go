@@ -8,6 +8,8 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 
 	"github.com/StephanMeijer/pr-dashboard/internal/gh"
 )
@@ -188,6 +190,26 @@ func TestViewShowsCIState(t *testing.T) {
 				t.Errorf("view missing CI header or %q:\n%s", want, view)
 			}
 		})
+	}
+}
+
+// The table truncates cells without regard for escape sequences, so colour
+// must survive on a real terminal, where tests normally run without it.
+func TestCIStateSurvivesColour(t *testing.T) {
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(prev) })
+
+	m, _ := newTestModel(nil)
+	m = update(m, resultMsg{prs: twoPRs(), at: t0}) // first row is selected
+	view := m.View()
+	for _, want := range []string{"✓ success", "✗ failure"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("coloured view missing %q:\n%q", want, view)
+		}
+	}
+	if !strings.Contains(view, "\x1b[") {
+		t.Error("expected the CI label to be coloured")
 	}
 }
 

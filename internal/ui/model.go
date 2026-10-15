@@ -4,6 +4,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 
@@ -289,21 +290,51 @@ func (m *Model) layout() {
 	m.table.SetHeight(max(1, m.height-chromeLines-len(m.errLines())))
 }
 
-// ciCell renders a CI state as a symbol and a word, so it stays readable
-// without colour.
+// ciLook is how a CI state is shown: a symbol and a word, so it stays readable
+// without colour, and the style the label is coloured with.
+type ciLook struct {
+	label string
+	style lipgloss.Style
+}
+
+var ciLooks = map[gh.CIState]ciLook{
+	gh.CISuccess: {"✓ success", lipgloss.NewStyle().Foreground(success)},
+	gh.CIFailure: {"✗ failure", lipgloss.NewStyle().Foreground(danger)},
+	gh.CIRunning: {"● running", lipgloss.NewStyle().Foreground(warning)},
+	gh.CIPending: {"○ pending", infoStyle},
+	gh.CINone:    {"– none", infoStyle},
+}
+
+// ciCell is the plain-text table cell of a CI state. It must not contain
+// escape sequences: the table truncates cells with a width function that
+// counts them as visible characters. See colorCI.
 func ciCell(s gh.CIState) string {
-	switch s {
-	case gh.CISuccess:
-		return lipgloss.NewStyle().Foreground(success).Render("✓ success")
-	case gh.CIFailure:
-		return lipgloss.NewStyle().Foreground(danger).Render("✗ failure")
-	case gh.CIRunning:
-		return lipgloss.NewStyle().Foreground(warning).Render("● running")
-	case gh.CIPending:
-		return infoStyle.Render("○ pending")
-	default:
-		return infoStyle.Render("– none")
+	if look, ok := ciLooks[s]; ok {
+		return look.label
 	}
+	return ciLooks[gh.CINone].label
+}
+
+// ciSuffix matches the CI label ending a rendered table line, optionally
+// followed by padding and the reset sequence of a styled (selected) row.
+var ciSuffix = regexp.MustCompile(`(✓ success|✗ failure|● running|○ pending|– none)((?: |\x1b\[[0-9;]*m)*)$`)
+
+// colorCI colours the CI label at the end of each line of the rendered table.
+// The CI column is last, so a label there cannot be part of a title.
+func colorCI(rendered string) string {
+	lines := strings.Split(rendered, "\n")
+	for i, line := range lines {
+		lines[i] = ciSuffix.ReplaceAllStringFunc(line, func(match string) string {
+			sub := ciSuffix.FindStringSubmatch(match)
+			for _, look := range ciLooks {
+				if look.label == sub[1] {
+					return look.style.Render(sub[1]) + sub[2]
+				}
+			}
+			return match
+		})
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (m Model) errLines() []string {
@@ -324,7 +355,7 @@ func (m Model) View() string {
 	scope := infoStyle.Render(fmt.Sprintf(" %d open across %d repos", len(m.prs), len(m.repos)))
 	b.WriteString(title + scope + "\n")
 
-	b.WriteString(m.table.View() + "\n")
+	b.WriteString(colorCI(m.table.View()) + "\n")
 
 	for _, line := range m.errLines() {
 		b.WriteString(errStyle.Render("✗ "+line) + "\n")
