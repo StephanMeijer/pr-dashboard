@@ -12,7 +12,7 @@ to fetch data, so it works with whatever account `gh` is logged in to.
  cli/cli                  #14678  `gh issue artifact` stack 12/12: Add ar…  BagToad         50m
  cli/cli                  #14679  Reject terminal stdin for `gh auth logi…  BagToad         1d        draft
 Updated 18:04:05 · next refresh in 42s
-↑/k up • ↓/j down • r refresh • q quit
+↑/k up • ↓/j down • enter/o open • r refresh • q quit
 ```
 
 ## Requirements
@@ -42,12 +42,13 @@ table and the other repositories still appear.
 
 ### Keys
 
-| Key          | Action        |
-| ------------ | ------------- |
-| `↑`/`k`      | Move up       |
-| `↓`/`j`      | Move down     |
-| `r`          | Refresh now   |
-| `q`/`ctrl+c` | Quit          |
+| Key          | Action                  |
+| ------------ | ----------------------- |
+| `↑`/`k`      | Move up                 |
+| `↓`/`j`      | Move down               |
+| `enter`/`o`  | Open PR in the browser  |
+| `r`          | Refresh now             |
+| `q`/`ctrl+c` | Quit                    |
 
 ## Development
 
