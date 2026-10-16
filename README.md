@@ -12,7 +12,7 @@ to fetch data, so it works with whatever account `gh` is logged in to.
  cli/cli                  #14678  `gh issue artifact` stack 12/12: Add ar…  BagToad         50m              ✗ conflict  ● running
  cli/cli                  #14679  Reject terminal stdin for `gh auth logi…  BagToad         1d        draft              ✗ failure
 Updated 18:04:05 · next refresh in 42s
-↑/k up • ↓/j down • enter/o open • r refresh • q quit
+↑/k up • ↓/j down • enter/o open • b base • r refresh • q quit
 ```
 
 ## Requirements
@@ -29,16 +29,29 @@ go install github.com/StephanMeijer/pr-dashboard@latest
 ## Usage
 
 ```sh
-pr-dashboard [--interval 60s] owner/repo [owner/repo ...]
+pr-dashboard [--interval 60s] [--base main] owner/repo [owner/repo ...]
 ```
 
 | Flag         | Default | Description                                  |
 | ------------ | ------- | -------------------------------------------- |
 | `--interval` | `1m`    | Time between automatic refreshes (min `10s`) |
+| `--base`     | all     | Only show pull requests into this base branch |
 
 Pull requests from all repositories are shown in one list, most recently
 updated first. If a repository can't be fetched, its error is shown under the
 table and the other repositories still appear.
+
+### Filtering by base branch
+
+Start with `--base main` to only list pull requests that target `main`, or
+press `b` while running to cycle through the base branches that occur in the
+current list: all, then each branch alphabetically, then all again. The title
+bar shows the active filter, e.g. `53 of 67 open across 1 repos · base: main`.
+The filter is kept across refreshes. A branch nobody targets shows an empty
+list; press `b` to get back to all.
+
+At most 100 open pull requests per repository are fetched, and the filter is
+applied to those.
 
 ### Conflict column
 
@@ -63,13 +76,14 @@ then success.
 
 ### Keys
 
-| Key          | Action                  |
-| ------------ | ----------------------- |
-| `↑`/`k`      | Move up                 |
-| `↓`/`j`      | Move down               |
-| `enter`/`o`  | Open PR in the browser  |
-| `r`          | Refresh now             |
-| `q`/`ctrl+c` | Quit                    |
+| Key          | Action                       |
+| ------------ | ---------------------------- |
+| `↑`/`k`      | Move up                      |
+| `↓`/`j`      | Move down                    |
+| `enter`/`o`  | Open PR in the browser       |
+| `b`          | Cycle the base branch filter |
+| `r`          | Refresh now                  |
+| `q`/`ctrl+c` | Quit                         |
 
 ## Development
 
