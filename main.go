@@ -29,9 +29,10 @@ func main() {
 
 func run() error {
 	base := flag.String("base", "", "only show pull requests into this base branch, e.g. main")
+	flat := flag.Bool("flat", false, "list pull requests newest first instead of grouped by repository")
 	interval := flag.Duration("interval", time.Minute, "time between automatic refreshes (minimum 10s)")
 	flag.Usage = func() {
-		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [--interval 60s] [--base main] owner/repo [owner/repo ...]\n\n", os.Args[0])
+		fmt.Fprintf(flag.CommandLine.Output(), "Usage: %s [--interval 60s] [--base main] [--flat] owner/repo [owner/repo ...]\n\n", os.Args[0])
 		flag.PrintDefaults()
 	}
 	flag.Parse()
@@ -51,7 +52,7 @@ func run() error {
 	}
 
 	client := gh.New()
-	model := ui.New(client.FetchAll, client.Open, repos, *interval).WithBase(*base)
+	model := ui.New(client.FetchAll, client.Open, repos, *interval).WithBase(*base).WithGrouping(!*flat)
 	_, err := tea.NewProgram(model, tea.WithAltScreen()).Run()
 	return err
 }

@@ -77,12 +77,13 @@ type keyMap struct {
 	Down    key.Binding
 	Open    key.Binding
 	Base    key.Binding
+	Group   key.Binding
 	Refresh key.Binding
 	Quit    key.Binding
 }
 
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Up, k.Down, k.Open, k.Base, k.Refresh, k.Quit}
+	return []key.Binding{k.Up, k.Down, k.Open, k.Base, k.Group, k.Refresh, k.Quit}
 }
 
 func (k keyMap) FullHelp() [][]key.Binding { return [][]key.Binding{k.ShortHelp()} }
@@ -92,6 +93,7 @@ var keys = keyMap{
 	Down:    key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
 	Open:    key.NewBinding(key.WithKeys("enter", "o"), key.WithHelp("enter/o", "open")),
 	Base:    key.NewBinding(key.WithKeys("b"), key.WithHelp("b", "base")),
+	Group:   key.NewBinding(key.WithKeys("g"), key.WithHelp("g", "group")),
 	Refresh: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
 	Quit:    key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
 }
@@ -124,6 +126,8 @@ type Model struct {
 	fetched     []gh.PR // every pull request of the last refresh
 	prs         []gh.PR // the ones shown: fetched narrowed down to base
 	base        string  // only show pull requests into this branch; "" shows all
+	grouped     bool    // group the shown pull requests under a header per repository
+	entries     []entry // table rows: prs, with group headers when grouped
 	err         error
 	openErr     error
 	lastUpdated time.Time
@@ -157,6 +161,7 @@ func New(fetch Fetcher, open Opener, repos []string, interval time.Duration) Mod
 		spinner:  s,
 		help:     help.New(),
 		loading:  true, // Init starts the first fetch
+		grouped:  true,
 	}
 	m.layout()
 	return m
@@ -204,17 +209,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, keys.Quit):
 			return m, tea.Quit
 		case key.Matches(msg, keys.Open):
-			cursor := m.table.Cursor()
-			if cursor < 0 || cursor >= len(m.prs) {
+			pr, ok := m.selected()
+			if !ok {
 				return m, nil
 			}
 			m.openErr = nil
 			m.layout()
-			return m, m.openCmd(m.prs[cursor])
+			return m, m.openCmd(pr)
 		case key.Matches(msg, keys.Base):
 			m.base = nextBase(m.base, m.fetched)
 			m.applyFilter()
-			m.table.SetCursor(0)
+			m.resetCursor()
+			return m, nil
+		case key.Matches(msg, keys.Group):
+			m.grouped = !m.grouped
+			m.applyFilter()
+			m.resetCursor()
 			return m, nil
 		case key.Matches(msg, keys.Refresh):
 			if m.loading {
@@ -257,8 +267,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
+	prev := m.table.Cursor()
 	var cmd tea.Cmd
 	m.table, cmd = m.table.Update(msg)
+	if _, ok := msg.(tea.KeyMsg); ok {
+		dir := 1
+		if m.table.Cursor() < prev {
+			dir = -1
+		}
+		m.settle(dir)
+	}
 	return m, cmd
 }
 
@@ -270,6 +288,60 @@ func (m Model) WithBase(base string) Model {
 	return m
 }
 
+// WithGrouping returns the model with the pull requests grouped under a header
+// per repository (the default), or as one flat list, most recently updated
+// first.
+func (m Model) WithGrouping(grouped bool) Model {
+	m.grouped = grouped
+	m.applyFilter()
+	return m
+}
+
+// entry is a row of the table: a pull request or, when grouped, the header of
+// a repository.
+type entry struct {
+	header bool
+	repo   string // of the header
+	count  int    // pull requests under the header
+	pr     gh.PR
+}
+
+// buildEntries lays out prs, which are most recently updated first. Grouped,
+// they follow the order of repos, each repository with at least one pull
+// request preceded by its header.
+func buildEntries(prs []gh.PR, repos []string, grouped bool) []entry {
+	if !grouped {
+		entries := make([]entry, len(prs))
+		for i, pr := range prs {
+			entries[i] = entry{pr: pr}
+		}
+		return entries
+	}
+
+	byRepo := map[string][]gh.PR{}
+	order := slices.Clone(repos)
+	for _, pr := range prs {
+		if !slices.Contains(order, pr.Repo) {
+			order = append(order, pr.Repo)
+		}
+		byRepo[pr.Repo] = append(byRepo[pr.Repo], pr)
+	}
+
+	var entries []entry
+	for _, repo := range slices.Compact(order) {
+		group := byRepo[repo]
+		if len(group) == 0 {
+			continue
+		}
+		entries = append(entries, entry{header: true, repo: repo, count: len(group)})
+		for _, pr := range group {
+			entries = append(entries, entry{pr: pr})
+		}
+		delete(byRepo, repo)
+	}
+	return entries
+}
+
 // applyFilter narrows the fetched pull requests down to the base branch and
 // refreshes the table.
 func (m *Model) applyFilter() {
@@ -279,12 +351,71 @@ func (m *Model) applyFilter() {
 			m.prs = append(m.prs, pr)
 		}
 	}
+	m.entries = buildEntries(m.prs, m.repos, m.grouped)
+
+	// The table panics on a row with more cells than it has columns, so rows
+	// must not outlive a change in the number of columns.
+	if len(m.table.Columns()) != m.columnCount() {
+		m.table.SetRows(nil)
+	}
+	m.layout()
 	m.table.SetRows(m.rows())
 	if m.table.Cursor() < 0 {
 		// SetRows leaves the cursor at -1 after the table was empty.
 		m.table.SetCursor(0)
 	}
-	m.layout()
+	m.settle(1)
+}
+
+// columnCount is the number of table columns: the repository only has a
+// column of its own when the list is not grouped by it.
+func (m Model) columnCount() int {
+	if m.grouped {
+		return 7
+	}
+	return 8
+}
+
+// selected returns the pull request under the cursor, if the cursor is on one.
+func (m Model) selected() (gh.PR, bool) {
+	c := m.table.Cursor()
+	if c < 0 || c >= len(m.entries) || m.entries[c].header {
+		return gh.PR{}, false
+	}
+	return m.entries[c].pr, true
+}
+
+func (m Model) onHeader() bool {
+	c := m.table.Cursor()
+	return c >= 0 && c < len(m.entries) && m.entries[c].header
+}
+
+// resetCursor moves the cursor to the first pull request.
+func (m *Model) resetCursor() {
+	m.table.SetCursor(0)
+	m.settle(1)
+}
+
+// settle moves the cursor off a group header, in direction dir (1 is down,
+// -1 is up) or, when there is no pull request that way, in the other one.
+func (m *Model) settle(dir int) {
+	for range 2 {
+		for m.onHeader() {
+			before := m.table.Cursor()
+			if dir > 0 {
+				m.table.MoveDown(1)
+			} else {
+				m.table.MoveUp(1)
+			}
+			if m.table.Cursor() == before {
+				break
+			}
+		}
+		if !m.onHeader() {
+			return
+		}
+		dir = -dir
+	}
 }
 
 // nextBase cycles the base branch filter: all, then each base branch that
@@ -311,38 +442,49 @@ func nextBase(current string, prs []gh.PR) string {
 
 func (m Model) rows() []table.Row {
 	now := m.now()
-	rows := make([]table.Row, len(m.prs))
-	for i, pr := range m.prs {
-		draft := ""
-		if pr.Draft {
-			draft = "draft"
+	rows := make([]table.Row, len(m.entries))
+	for i, e := range m.entries {
+		var cells table.Row
+		if e.header {
+			cells = table.Row{"", groupLabel(e.repo, e.count), "", "", "", "", ""}
+		} else {
+			pr := e.pr
+			draft := ""
+			if pr.Draft {
+				draft = "draft"
+			}
+			cells = table.Row{
+				fmt.Sprintf("#%d", pr.Number),
+				pr.Title,
+				pr.Author,
+				age(now.Sub(pr.UpdatedAt)),
+				draft,
+				conflictCell(pr.Conflicting),
+				ciCell(pr.CI),
+			}
 		}
-		rows[i] = table.Row{
-			pr.Repo,
-			fmt.Sprintf("#%d", pr.Number),
-			pr.Title,
-			pr.Author,
-			age(now.Sub(pr.UpdatedAt)),
-			draft,
-			conflictCell(pr.Conflicting),
-			ciCell(pr.CI),
+		if !m.grouped {
+			cells = append(table.Row{e.pr.Repo}, cells...)
 		}
+		rows[i] = cells
 	}
 	return rows
 }
 
 // layout sizes the table columns and height to the terminal.
 func (m *Model) layout() {
-	repoWidth := len("Repo")
-	for _, r := range m.repos {
-		repoWidth = max(repoWidth, len(r))
+	repoWidth := 0 // grouped, the repository is in the group header
+	if !m.grouped {
+		repoWidth = len("Repo")
+		for _, r := range m.repos {
+			repoWidth = max(repoWidth, len(r))
+		}
+		repoWidth = min(repoWidth, maxRepoWidth)
 	}
-	repoWidth = min(repoWidth, maxRepoWidth)
 
 	author := authorWidth
 	fixed := repoWidth + numberWidth + author + updatedWidth + draftWidth + conflictWidth + ciWidth
-	const columns = 8
-	titleWidth := m.width - fixed - columns*cellPadding
+	titleWidth := m.width - fixed - m.columnCount()*cellPadding
 	if deficit := minTitle - titleWidth; deficit > 0 {
 		titleWidth = minTitle
 		shrink := func(w *int, floor int) {
@@ -355,18 +497,38 @@ func (m *Model) layout() {
 		shrink(&titleWidth, shrunkTitle)
 	}
 
-	m.table.SetColumns([]table.Column{
-		{Title: "Repo", Width: repoWidth},
-		{Title: "#", Width: numberWidth},
-		{Title: "Title", Width: titleWidth},
-		{Title: "Author", Width: author},
-		{Title: "Updated", Width: updatedWidth},
-		{Title: "Draft", Width: draftWidth},
-		{Title: "Conflict", Width: conflictWidth},
-		{Title: "CI", Width: ciWidth},
-	})
+	var cols []table.Column
+	if !m.grouped {
+		cols = append(cols, table.Column{Title: "Repo", Width: repoWidth})
+	}
+	m.table.SetColumns(append(cols,
+		table.Column{Title: "#", Width: numberWidth},
+		table.Column{Title: "Title", Width: titleWidth},
+		table.Column{Title: "Author", Width: author},
+		table.Column{Title: "Updated", Width: updatedWidth},
+		table.Column{Title: "Draft", Width: draftWidth},
+		table.Column{Title: "Conflict", Width: conflictWidth},
+		table.Column{Title: "CI", Width: ciWidth},
+	))
 	m.table.SetWidth(m.width)
 	m.table.SetHeight(max(1, m.height-chromeLines-len(m.errLines())))
+}
+
+// groupLabel is the text of a group header.
+func groupLabel(repo string, count int) string {
+	return fmt.Sprintf("▾ %s · %d open", repo, count)
+}
+
+// groupHeader matches the text of a group header in a rendered table line.
+var groupHeader = regexp.MustCompile(`▾ \S+ · \d+ open`)
+
+// colorGroups emphasises the group headers of the rendered table. Like the
+// status labels, they are coloured after rendering. See colorStatus.
+func colorGroups(rendered string) string {
+	style := lipgloss.NewStyle().Bold(true).Foreground(accent)
+	return groupHeader.ReplaceAllStringFunc(rendered, func(label string) string {
+		return strings.ReplaceAll(style.Render(label), "\x1b[0m", "\x1b[22;39m")
+	})
 }
 
 // ciLook is how a CI state is shown: a symbol and a word, so it stays readable
@@ -463,7 +625,7 @@ func (m Model) View() string {
 	scope := infoStyle.Render(m.scope())
 	b.WriteString(title + scope + "\n")
 
-	b.WriteString(colorStatus(m.table.View()) + "\n")
+	b.WriteString(colorGroups(colorStatus(m.table.View())) + "\n")
 
 	for _, line := range m.errLines() {
 		b.WriteString(errStyle.Render("✗ "+line) + "\n")

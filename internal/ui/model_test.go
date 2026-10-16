@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -43,10 +44,10 @@ func TestResultPopulatesTableAndSchedulesRefresh(t *testing.T) {
 	if m.loading {
 		t.Error("still loading after result")
 	}
-	if got := len(m.table.Rows()); got != 1 {
-		t.Fatalf("got %d rows, want 1", got)
+	if got := len(m.table.Rows()); got != 2 {
+		t.Fatalf("got %d rows, want a group header and 1 pull request", got)
 	}
-	if row := m.table.Rows()[0]; row[1] != "#7" || row[4] != "3h" {
+	if row := m.table.Rows()[1]; row[0] != "#7" || row[3] != "3h" {
 		t.Errorf("unexpected row %v", row)
 	}
 	if !m.nextAt.Equal(t0.Add(time.Minute)) {
@@ -226,7 +227,7 @@ func TestCIStateSurvivesColour(t *testing.T) {
 	prs[0].Conflicting = true
 	m = update(m, resultMsg{prs: prs, at: t0}) // first row is selected
 	view := m.View()
-	for _, want := range []string{"✓ success", "✗ failure", "✗ conflict"} {
+	for _, want := range []string{"✓ success", "✗ failure", "✗ conflict", "▾ acme/widgets · 1 open"} {
 		if !strings.Contains(view, want) {
 			t.Errorf("coloured view missing %q:\n%q", want, view)
 		}
@@ -241,7 +242,16 @@ func TestCIStateSurvivesColour(t *testing.T) {
 func TestCIColumnFitsNarrowTerminals(t *testing.T) {
 	const minWidth = 82
 	for width := minWidth; width <= 200; width++ {
-		m := New(nil, nil, []string{"stephanmeijer/meneerhenk"}, time.Minute)
+		for _, grouped := range []bool{true, false} {
+			testCIColumnFits(t, width, grouped)
+		}
+	}
+}
+
+func testCIColumnFits(t *testing.T, width int, grouped bool) {
+	t.Helper()
+	{
+		m := New(nil, nil, []string{"stephanmeijer/meneerhenk"}, time.Minute).WithGrouping(grouped)
 		m.now = func() time.Time { return t0 }
 		m = update(m, tea.WindowSizeMsg{Width: width, Height: 20})
 		prs := []gh.PR{{Repo: "stephanmeijer/meneerhenk", Number: 578, Title: "feat(executor): apply_patch for GPT-family models", Author: "StephanMeijer", UpdatedAt: t0, CI: gh.CIFailure, Conflicting: true}}
@@ -249,13 +259,13 @@ func TestCIColumnFitsNarrowTerminals(t *testing.T) {
 
 		for _, line := range strings.Split(m.View(), "\n") {
 			if w := lipgloss.Width(line); w > width {
-				t.Fatalf("width %d: line is %d wide: %q", width, w, line)
+				t.Fatalf("width %d, grouped %v: line is %d wide: %q", width, grouped, w, line)
 			}
 		}
 		view := m.View()
 		for _, want := range []string{"✗ failure", "✗ conflict"} {
 			if !strings.Contains(view, want) {
-				t.Fatalf("width %d: %q missing:\n%s", width, want, view)
+				t.Fatalf("width %d, grouped %v: %q missing:\n%s", width, grouped, want, view)
 			}
 		}
 	}
@@ -273,8 +283,8 @@ func TestConflictColumn(t *testing.T) {
 			lines = append(lines, line)
 		}
 	}
-	if len(lines) != 1 || !strings.Contains(lines[0], "acme/gadgets") {
-		t.Errorf("want only acme/gadgets marked as conflicting, got %q", lines)
+	if len(lines) != 1 || !strings.Contains(lines[0], "Fix cogs") {
+		t.Errorf("want only the Fix cogs pull request marked as conflicting, got %q", lines)
 	}
 	if !strings.Contains(m.View(), "Conflict") {
 		t.Error("view missing Conflict header")
@@ -378,6 +388,132 @@ func TestOpenUsesTheFilteredRow(t *testing.T) {
 	cmd()
 	if got != 4 {
 		t.Errorf("opened #%d, want #4", got)
+	}
+}
+
+func groupPRs() []gh.PR {
+	// Most recently updated first, as the fetcher returns them.
+	return []gh.PR{
+		{Repo: "acme/widgets", Number: 1, Title: "W-new", UpdatedAt: t0.Add(-1 * time.Hour)},
+		{Repo: "acme/gadgets", Number: 2, Title: "G-new", UpdatedAt: t0.Add(-2 * time.Hour)},
+		{Repo: "acme/widgets", Number: 3, Title: "W-old", UpdatedAt: t0.Add(-3 * time.Hour)},
+		{Repo: "acme/gadgets", Number: 4, Title: "G-old", UpdatedAt: t0.Add(-4 * time.Hour)},
+	}
+}
+
+func titles(m Model) []string {
+	col := 1 // after the number
+	if !m.grouped {
+		col = 2 // after the repository and the number
+	}
+	var out []string
+	for _, row := range m.table.Rows() {
+		out = append(out, row[col])
+	}
+	return out
+}
+
+func TestGroupsFollowRepoOrderWithHeaders(t *testing.T) {
+	m := New(nil, nil, []string{"acme/gadgets", "acme/broken", "acme/widgets"}, time.Minute)
+	m.now = func() time.Time { return t0 }
+	m = update(m, tea.WindowSizeMsg{Width: 120, Height: 20})
+	m = update(m, resultMsg{prs: groupPRs(), at: t0})
+
+	want := []string{
+		"▾ acme/gadgets · 2 open", "G-new", "G-old",
+		"▾ acme/widgets · 2 open", "W-new", "W-old",
+	}
+	if got := titles(m); !slices.Equal(got, want) {
+		t.Errorf("rows = %q, want %q", got, want)
+	}
+	if strings.Contains(m.View(), "acme/broken") {
+		t.Error("a repository without pull requests must not get a header")
+	}
+}
+
+func TestGroupHeaderCountsOnlyShownPullRequests(t *testing.T) {
+	m, _ := newTestModel(nil)
+	prs := groupPRs()
+	prs[0].Base, prs[1].Base, prs[2].Base, prs[3].Base = "main", "main", "dev", "dev"
+	m = update(m, resultMsg{prs: prs, at: t0})
+	m = m.WithBase("main")
+	if got, want := titles(m), []string{"▾ acme/widgets · 1 open", "W-new", "▾ acme/gadgets · 1 open", "G-new"}; !slices.Equal(got, want) {
+		t.Errorf("rows = %q, want %q", got, want)
+	}
+}
+
+func TestCursorSkipsGroupHeaders(t *testing.T) {
+	var opened []int
+	m, _ := newTestModelWithOpener(nil, func(_ context.Context, _ string, number int) error {
+		opened = append(opened, number)
+		return nil
+	})
+	m = update(m, resultMsg{prs: groupPRs(), at: t0})
+	// widgets: #1 #3, gadgets: #2 #4
+	openSelected := func() {
+		_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+		if cmd == nil {
+			t.Fatal("cursor is on a group header")
+		}
+		cmd()
+	}
+
+	openSelected() // starts on the first pull request, not the header
+	m = press(m, "j")
+	openSelected()
+	m = press(m, "j") // crosses the gadgets header
+	openSelected()
+	m = press(m, "k") // back over it
+	openSelected()
+	m = press(m, "k")
+	m = press(m, "k") // stays on the first pull request
+	openSelected()
+
+	if want := []int{1, 3, 2, 3, 1}; !slices.Equal(opened, want) {
+		t.Errorf("opened %v, want %v", opened, want)
+	}
+}
+
+func TestOpenOnHeaderDoesNothing(t *testing.T) {
+	m, _ := newTestModelWithOpener(nil, func(context.Context, string, int) error {
+		t.Error("opener must not be called for a header")
+		return nil
+	})
+	m = update(m, resultMsg{prs: groupPRs(), at: t0})
+	m.table.SetCursor(0) // the header
+	if _, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter}); cmd != nil {
+		t.Error("expected no command on a group header")
+	}
+}
+
+func TestGKeyTogglesFlatList(t *testing.T) {
+	m, _ := newTestModel(nil)
+	m = update(m, resultMsg{prs: groupPRs(), at: t0})
+
+	m = press(m, "g")
+	if got, want := titles(m), []string{"W-new", "G-new", "W-old", "G-old"}; !slices.Equal(got, want) {
+		t.Errorf("flat rows = %q, want %q", got, want)
+	}
+	view := m.View()
+	if !strings.Contains(view, "Repo") || !strings.Contains(view, "acme/gadgets") || strings.Contains(view, "▾") {
+		t.Errorf("flat view should have a Repo column and no group headers:\n%s", view)
+	}
+	if _, ok := m.selected(); !ok {
+		t.Error("a pull request should be selected after toggling")
+	}
+
+	m = press(m, "g")
+	if !strings.Contains(m.View(), "▾ acme/widgets · 2 open") {
+		t.Error("toggling again should group again")
+	}
+}
+
+func TestFlatModeFromWithGrouping(t *testing.T) {
+	m, _ := newTestModel(nil)
+	m = m.WithGrouping(false)
+	m = update(m, resultMsg{prs: groupPRs(), at: t0})
+	if got, want := titles(m), []string{"W-new", "G-new", "W-old", "G-old"}; !slices.Equal(got, want) {
+		t.Errorf("rows = %q, want %q", got, want)
 	}
 }
 
