@@ -38,6 +38,9 @@ func TestFetchParsesGhOutput(t *testing.T) {
 		got.Branch != "deps/bump" || !got.Draft || got.UpdatedAt.IsZero() {
 		t.Errorf("unexpected pr: %+v", got)
 	}
+	if prs[0].Base != "main" || got.Base != "release/1.x" {
+		t.Errorf("Base = %q, %q; want main, release/1.x", prs[0].Base, got.Base)
+	}
 	if prs[0].Conflicting || !got.Conflicting {
 		t.Errorf("Conflicting = %v, %v; want false, true", prs[0].Conflicting, got.Conflicting)
 	}

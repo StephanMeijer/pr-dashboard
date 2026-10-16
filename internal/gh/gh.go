@@ -15,7 +15,7 @@ import (
 )
 
 // prFields are the JSON fields requested from `gh pr list`.
-const prFields = "number,title,author,headRefName,isDraft,updatedAt,url,mergeable,statusCheckRollup"
+const prFields = "number,title,author,headRefName,baseRefName,isDraft,updatedAt,url,mergeable,statusCheckRollup"
 
 // prLimit caps how many open pull requests are fetched per repository.
 const prLimit = 100
@@ -39,6 +39,7 @@ type PR struct {
 	Title     string
 	Author    string
 	Branch    string
+	Base      string // branch the pull request is opened against
 	Draft     bool
 	UpdatedAt time.Time
 	URL       string
@@ -84,6 +85,7 @@ type rawPR struct {
 		Login string `json:"login"`
 	} `json:"author"`
 	HeadRefName string    `json:"headRefName"`
+	BaseRefName string    `json:"baseRefName"`
 	IsDraft     bool      `json:"isDraft"`
 	UpdatedAt   time.Time `json:"updatedAt"`
 	URL         string    `json:"url"`
@@ -123,6 +125,7 @@ func (c *Client) Fetch(ctx context.Context, repo string) ([]PR, error) {
 			Title:       r.Title,
 			Author:      r.Author.Login,
 			Branch:      r.HeadRefName,
+			Base:        r.BaseRefName,
 			Draft:       r.IsDraft,
 			UpdatedAt:   r.UpdatedAt,
 			URL:         r.URL,
