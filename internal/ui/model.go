@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -75,12 +76,13 @@ type keyMap struct {
 	Up      key.Binding
 	Down    key.Binding
 	Open    key.Binding
+	Base    key.Binding
 	Refresh key.Binding
 	Quit    key.Binding
 }
 
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Up, k.Down, k.Open, k.Refresh, k.Quit}
+	return []key.Binding{k.Up, k.Down, k.Open, k.Base, k.Refresh, k.Quit}
 }
 
 func (k keyMap) FullHelp() [][]key.Binding { return [][]key.Binding{k.ShortHelp()} }
@@ -89,6 +91,7 @@ var keys = keyMap{
 	Up:      key.NewBinding(key.WithKeys("up", "k"), key.WithHelp("↑/k", "up")),
 	Down:    key.NewBinding(key.WithKeys("down", "j"), key.WithHelp("↓/j", "down")),
 	Open:    key.NewBinding(key.WithKeys("enter", "o"), key.WithHelp("enter/o", "open")),
+	Base:    key.NewBinding(key.WithKeys("b"), key.WithHelp("b", "base")),
 	Refresh: key.NewBinding(key.WithKeys("r"), key.WithHelp("r", "refresh")),
 	Quit:    key.NewBinding(key.WithKeys("q", "ctrl+c"), key.WithHelp("q", "quit")),
 }
@@ -118,7 +121,9 @@ type Model struct {
 	help    help.Model
 
 	loading     bool
-	prs         []gh.PR
+	fetched     []gh.PR // every pull request of the last refresh
+	prs         []gh.PR // the ones shown: fetched narrowed down to base
+	base        string  // only show pull requests into this branch; "" shows all
 	err         error
 	openErr     error
 	lastUpdated time.Time
@@ -206,6 +211,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.openErr = nil
 			m.layout()
 			return m, m.openCmd(m.prs[cursor])
+		case key.Matches(msg, keys.Base):
+			m.base = nextBase(m.base, m.fetched)
+			m.applyFilter()
+			m.table.SetCursor(0)
+			return m, nil
 		case key.Matches(msg, keys.Refresh):
 			if m.loading {
 				return m, nil
@@ -230,15 +240,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		m.err = msg.err
 		m.openErr = nil
-		m.prs = msg.prs
+		m.fetched = msg.prs
 		m.lastUpdated = msg.at
 		m.nextAt = msg.at.Add(m.interval)
-		m.table.SetRows(m.rows())
-		if m.table.Cursor() < 0 {
-			// SetRows leaves the cursor at -1 after the table was empty.
-			m.table.SetCursor(0)
-		}
-		m.layout()
+		m.applyFilter()
 		return m, nil
 
 	case openMsg:
@@ -255,6 +260,53 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.table, cmd = m.table.Update(msg)
 	return m, cmd
+}
+
+// WithBase returns the model showing only pull requests into the given base
+// branch, or all of them for "".
+func (m Model) WithBase(base string) Model {
+	m.base = base
+	m.applyFilter()
+	return m
+}
+
+// applyFilter narrows the fetched pull requests down to the base branch and
+// refreshes the table.
+func (m *Model) applyFilter() {
+	m.prs = m.prs[:0:0]
+	for _, pr := range m.fetched {
+		if m.base == "" || pr.Base == m.base {
+			m.prs = append(m.prs, pr)
+		}
+	}
+	m.table.SetRows(m.rows())
+	if m.table.Cursor() < 0 {
+		// SetRows leaves the cursor at -1 after the table was empty.
+		m.table.SetCursor(0)
+	}
+	m.layout()
+}
+
+// nextBase cycles the base branch filter: all, then each base branch that
+// occurs in prs in alphabetical order, then all again. A current value that
+// occurs nowhere (say a mistyped flag) is followed by all.
+func nextBase(current string, prs []gh.PR) string {
+	seen := map[string]bool{}
+	var bases []string
+	for _, pr := range prs {
+		if pr.Base != "" && !seen[pr.Base] {
+			seen[pr.Base] = true
+			bases = append(bases, pr.Base)
+		}
+	}
+	slices.Sort(bases)
+
+	cycle := append([]string{""}, bases...)
+	i := slices.Index(cycle, current)
+	if i < 0 {
+		return ""
+	}
+	return cycle[(i+1)%len(cycle)]
 }
 
 func (m Model) rows() []table.Row {
@@ -408,7 +460,7 @@ func (m Model) View() string {
 	var b strings.Builder
 
 	title := titleStyle.Render("PR Dashboard")
-	scope := infoStyle.Render(fmt.Sprintf(" %d open across %d repos", len(m.prs), len(m.repos)))
+	scope := infoStyle.Render(m.scope())
 	b.WriteString(title + scope + "\n")
 
 	b.WriteString(colorStatus(m.table.View()) + "\n")
@@ -420,6 +472,14 @@ func (m Model) View() string {
 	b.WriteString(m.status() + "\n")
 	b.WriteString(m.help.View(keys))
 	return b.String()
+}
+
+func (m Model) scope() string {
+	if m.base == "" {
+		return fmt.Sprintf(" %d open across %d repos", len(m.prs), len(m.repos))
+	}
+	return fmt.Sprintf(" %d of %d open across %d repos · base: %s",
+		len(m.prs), len(m.fetched), len(m.repos), m.base)
 }
 
 func (m Model) status() string {

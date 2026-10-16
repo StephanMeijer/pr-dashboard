@@ -281,6 +281,106 @@ func TestConflictColumn(t *testing.T) {
 	}
 }
 
+func basePRs() []gh.PR {
+	return []gh.PR{
+		{Repo: "acme/widgets", Number: 1, Title: "One", Base: "main", UpdatedAt: t0},
+		{Repo: "acme/widgets", Number: 2, Title: "Two", Base: "release/1.x", UpdatedAt: t0},
+		{Repo: "acme/gadgets", Number: 3, Title: "Three", Base: "main", UpdatedAt: t0},
+		{Repo: "acme/gadgets", Number: 4, Title: "Four", Base: "develop", UpdatedAt: t0},
+	}
+}
+
+func press(m Model, k string) Model {
+	return update(m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(k)})
+}
+
+func TestBaseKeyCyclesThroughBranches(t *testing.T) {
+	m, _ := newTestModel(nil)
+	m = update(m, resultMsg{prs: basePRs(), at: t0})
+
+	want := []struct {
+		base  string
+		shown int
+	}{{"develop", 1}, {"main", 2}, {"release/1.x", 1}, {"", 4}}
+	for _, w := range want {
+		m = press(m, "b")
+		if m.base != w.base || len(m.prs) != w.shown {
+			t.Fatalf("after b: base %q showing %d, want %q showing %d", m.base, len(m.prs), w.base, w.shown)
+		}
+	}
+}
+
+func TestBaseFilterHidesOtherBranches(t *testing.T) {
+	m, _ := newTestModel(nil)
+	m = update(m, resultMsg{prs: basePRs(), at: t0})
+	m = press(press(m, "b"), "b") // main
+
+	view := m.View()
+	if !strings.Contains(view, "2 of 4 open") || !strings.Contains(view, "base: main") {
+		t.Errorf("title does not describe the filter:\n%s", view)
+	}
+	for _, hidden := range []string{"Two", "Four"} {
+		if strings.Contains(view, hidden) {
+			t.Errorf("view shows %q, which does not target main", hidden)
+		}
+	}
+	for _, shown := range []string{"One", "Three"} {
+		if !strings.Contains(view, shown) {
+			t.Errorf("view hides %q, which targets main", shown)
+		}
+	}
+}
+
+func TestWithBaseAppliesToTheFirstFetch(t *testing.T) {
+	m, _ := newTestModel(nil)
+	m = m.WithBase("develop")
+	m = update(m, resultMsg{prs: basePRs(), at: t0})
+	if len(m.prs) != 1 || m.prs[0].Number != 4 {
+		t.Errorf("shown = %+v, want only #4", m.prs)
+	}
+}
+
+func TestBaseFilterSurvivesRefresh(t *testing.T) {
+	m, _ := newTestModel(nil)
+	m = m.WithBase("main")
+	m = update(m, resultMsg{prs: basePRs(), at: t0})
+	m = update(m, resultMsg{prs: basePRs()[1:], at: t0}) // #1 merged meanwhile
+	if len(m.prs) != 1 || m.prs[0].Number != 3 {
+		t.Errorf("shown = %+v, want only #3", m.prs)
+	}
+}
+
+func TestUnknownBaseShowsNothingAndBCyclesBackToAll(t *testing.T) {
+	m, _ := newTestModel(nil)
+	m = m.WithBase("mian")
+	m = update(m, resultMsg{prs: basePRs(), at: t0})
+	if len(m.prs) != 0 {
+		t.Fatalf("shown %d, want none", len(m.prs))
+	}
+	m = press(m, "b")
+	if m.base != "" || len(m.prs) != 4 {
+		t.Errorf("after b: base %q showing %d, want all 4", m.base, len(m.prs))
+	}
+}
+
+func TestOpenUsesTheFilteredRow(t *testing.T) {
+	var got int
+	m, _ := newTestModelWithOpener(nil, func(_ context.Context, _ string, number int) error {
+		got = number
+		return nil
+	})
+	m = update(m, resultMsg{prs: basePRs(), at: t0})
+	m = press(m, "b") // develop: only #4
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	if cmd == nil {
+		t.Fatal("expected an open command")
+	}
+	cmd()
+	if got != 4 {
+		t.Errorf("opened #%d, want #4", got)
+	}
+}
+
 func TestAge(t *testing.T) {
 	cases := map[time.Duration]string{
 		45 * time.Second: "45s",
