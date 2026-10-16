@@ -6,13 +6,15 @@ to fetch data, so it works with whatever account `gh` is logged in to.
 
 ```
  PR Dashboard  179 open across 2 repos
- Repo                     #       Title                                     Author          Updated   Draft  Conflict    CI
-───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- charmbracelet/bubbletea  #1868   fix(renderer): erase through rows a nar…  yanmxa          20m                          ✓ success
- cli/cli                  #14678  `gh issue artifact` stack 12/12: Add ar…  BagToad         50m              ✗ conflict  ● running
- cli/cli                  #14679  Reject terminal stdin for `gh auth logi…  BagToad         1d        draft              ✗ failure
+ #       Title                                     Author          Updated   Draft  Conflict    CI
+─────────────────────────────────────────────────────────────────────────────────────────────────────
+         ▾ charmbracelet/bubbletea · 112 open
+ #1868   fix(renderer): erase through rows a nar…  yanmxa          20m                          ✓ success
+         ▾ cli/cli · 67 open
+ #14678  `gh issue artifact` stack 12/12: Add ar…  BagToad         50m              ✗ conflict  ● running
+ #14679  Reject terminal stdin for `gh auth logi…  BagToad         1d        draft              ✗ failure
 Updated 18:04:05 · next refresh in 42s
-↑/k up • ↓/j down • enter/o open • b base • r refresh • q quit
+↑/k up • ↓/j down • enter/o open • b base • g group • r refresh • q quit
 ```
 
 ## Requirements
@@ -29,17 +31,24 @@ go install github.com/StephanMeijer/pr-dashboard@latest
 ## Usage
 
 ```sh
-pr-dashboard [--interval 60s] [--base main] owner/repo [owner/repo ...]
+pr-dashboard [--interval 60s] [--base main] [--flat] owner/repo [owner/repo ...]
 ```
 
 | Flag         | Default | Description                                  |
 | ------------ | ------- | -------------------------------------------- |
 | `--interval` | `1m`    | Time between automatic refreshes (min `10s`) |
 | `--base`     | all     | Only show pull requests into this base branch |
+| `--flat`     | off     | One list, most recently updated first, instead of grouped by repository |
 
-Pull requests from all repositories are shown in one list, most recently
-updated first. If a repository can't be fetched, its error is shown under the
-table and the other repositories still appear.
+Pull requests are grouped by repository, in the order you gave the
+repositories, under a header with the number of open pull requests. Within a
+group the most recently updated comes first, and the cursor skips the headers.
+Repositories without (matching) pull requests get no header. Press `g`, or
+start with `--flat`, for one list of all pull requests, most recently updated
+first, with a Repo column.
+
+If a repository can't be fetched, its error is shown under the table and the
+other repositories still appear.
 
 ### Filtering by base branch
 
@@ -76,14 +85,15 @@ then success.
 
 ### Keys
 
-| Key          | Action                       |
-| ------------ | ---------------------------- |
-| `↑`/`k`      | Move up                      |
-| `↓`/`j`      | Move down                    |
-| `enter`/`o`  | Open PR in the browser       |
-| `b`          | Cycle the base branch filter |
-| `r`          | Refresh now                  |
-| `q`/`ctrl+c` | Quit                         |
+| Key          | Action                          |
+| ------------ | ------------------------------- |
+| `↑`/`k`      | Move up                         |
+| `↓`/`j`      | Move down                       |
+| `enter`/`o`  | Open PR in the browser          |
+| `b`          | Cycle the base branch filter    |
+| `g`          | Group by repository / flat list |
+| `r`          | Refresh now                     |
+| `q`/`ctrl+c` | Quit                            |
 
 ## Development
 
